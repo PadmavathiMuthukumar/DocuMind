@@ -1,79 +1,67 @@
-# src/chunker.py
+# semantic/src/chunker.py
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
+from .config import CHUNK_OVERLAP_WORDS, CHUNK_SIZE_WORDS
 from .pdf_processor import PageText
 
 
-DEFAULT_CHUNK_SIZE = 500
-DEFAULT_OVERLAP = 75
-
+# Sanity limits (in words).
+# Warning: all-MiniLM-L6-v2 reads only ~256 tokens (about 190 words).
+# Chunks much larger than that get silently cut off by the model.
 MIN_CHUNK_SIZE = 50
 MAX_CHUNK_SIZE = 2_000
 
 
 @dataclass(frozen=True)
 class TextChunk:
-    """
-    Represents one searchable chunk.
-    """
+    """One searchable piece of a document."""
 
-    chunk_id: str
+    chunk_id: str  # "<document_id>_p<page>_c<index>", e.g. "ab12_p4_c0"
     document_id: str
-    file_name: str
-    page_number: int
-    chunk_number: int
+    filename: str
+    page_number: int  # starts at 1
+    chunk_index: int  # position within its page, starts at 0
     text: str
 
 
-def validate_chunk_settings(
-    chunk_size: int,
-    overlap: int,
-) -> None:
-
+def validate_chunk_settings(chunk_size: int, overlap: int) -> None:
     if not MIN_CHUNK_SIZE <= chunk_size <= MAX_CHUNK_SIZE:
         raise ValueError(
-            f"chunk_size must be between "
-            f"{MIN_CHUNK_SIZE} and {MAX_CHUNK_SIZE}."
+            f"chunk_size must be between {MIN_CHUNK_SIZE} "
+            f"and {MAX_CHUNK_SIZE}."
         )
 
     if overlap < 0:
         raise ValueError("overlap cannot be negative.")
 
+    # If overlap >= chunk_size the window would never move forward
+    # and the loop below would run forever.
     if overlap >= chunk_size:
-        raise ValueError(
-            "overlap must be smaller than chunk_size."
-        )
+        raise ValueError("overlap must be smaller than chunk_size.")
 
 
 def split_text(
     text: str,
-    chunk_size: int = DEFAULT_CHUNK_SIZE,
-    overlap: int = DEFAULT_OVERLAP,
+    chunk_size: int = CHUNK_SIZE_WORDS,
+    overlap: int = CHUNK_OVERLAP_WORDS,
 ) -> list[str]:
-    """
-    Split text into overlapping word-based chunks.
-    """
+    """Split text into overlapping chunks of `chunk_size` words."""
 
     validate_chunk_settings(chunk_size, overlap)
 
-    words = text.split()
+    words = text.split()  # splits on any whitespace, drops empties
 
     if not words:
         return []
 
     chunks: list[str] = []
-
     start = 0
 
     while start < len(words):
-
-        end = min(
-            start + chunk_size,
-            len(words),
-        )
+        end = min(start + chunk_size, len(words))
 
         chunk = " ".join(words[start:end]).strip()
 
@@ -83,6 +71,7 @@ def split_text(
         if end == len(words):
             break
 
+        # Step back by `overlap` words so neighbors share context.
         start = end - overlap
 
     return chunks
@@ -91,47 +80,31 @@ def split_text(
 def create_chunks(
     pages: list[PageText],
     document_id: str,
-    file_name: str,
-    chunk_size: int = DEFAULT_CHUNK_SIZE,
-    overlap: int = DEFAULT_OVERLAP,
+    filename: str,
+    chunk_size: int = CHUNK_SIZE_WORDS,
+    overlap: int = CHUNK_OVERLAP_WORDS,
 ) -> list[TextChunk]:
-    """
-    Convert page text into searchable chunks while preserving
-    document/page/chunk information.
-    """
+    """Turn pages into chunks, keeping document and page identity."""
 
     chunks: list[TextChunk] = []
 
-    global_chunk_number = 0
-
     for page in pages:
-
         page_chunks = split_text(
-            page.text,
-            chunk_size=chunk_size,
-            overlap=overlap,
+            page.text, chunk_size=chunk_size, overlap=overlap
         )
 
-        for page_chunk_number, text in enumerate(
-            page_chunks,
-            start=1,
-        ):
-
-            global_chunk_number += 1
-
-            chunk_id = (
-                f"{document_id}"
-                f"_p{page.page_number}"
-                f"_c{page_chunk_number}"
-            )
-
+        for chunk_index, text in enumerate(page_chunks):
             chunks.append(
                 TextChunk(
-                    chunk_id=chunk_id,
+                    chunk_id=(
+                        f"{document_id}"
+                        f"_p{page.page_number}"
+                        f"_c{chunk_index}"
+                    ),
                     document_id=document_id,
-                    file_name=file_name,
+                    filename=filename,
                     page_number=page.page_number,
-                    chunk_number=global_chunk_number,
+                    chunk_index=chunk_index,
                     text=text,
                 )
             )

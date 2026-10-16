@@ -2,3 +2,5 @@
 venv/
 # Ignore chroma db
 chroma/
+# Ignore .env files
+.env/
