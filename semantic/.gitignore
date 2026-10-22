@@ -1,6 +1,20 @@
-# Ignore virtual environment directories
+# Python virtual environment
 venv/
-# Ignore chroma db
-chroma/
-# Ignore .env files
-.env/
+
+# Python cache files
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# ChromaDB data (keep the empty-folder marker)
+data/chroma/*
+!data/chroma/.gitkeep
+
+# Settings file (keep .env.example)
+.env
+.env.*
+!.env.example
+
+# PDFs you upload or test with
+data/pdfs/*
+!data/pdfs/.gitkeep

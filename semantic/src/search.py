@@ -1,182 +1,155 @@
-# src/search.py
+# semantic/src/search.py
 
 from __future__ import annotations
 
 import argparse
-from pathlib import Path
 from typing import Any
 
+from .config import MAX_DISTANCE, TOP_K_DEFAULT
 from .embeddings import generate_query_embedding
-from .vector_store import (
-    get_chroma_client,
-    get_collection,
-    search_chunks,
+from .vector_store import MAX_TOP_K, get_default_collection, search_chunks
+
+
+MATCH_MESSAGE = (
+    "Showing the most relevant source excerpts. "
+    "These are passages from your documents, not a generated answer."
 )
+NO_MATCH_MESSAGE = (
+    "No sufficiently relevant passages were found in the uploaded documents."
+)
+EMPTY_INDEX_MESSAGE = "No documents have been indexed yet."
 
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+def _response(
+    query: str,
+    results: list[dict[str, Any]],
+    message: str,
+) -> dict[str, Any]:
+    return {
+        "query": query,
+        "no_match": len(results) == 0,
+        "message": message,
+        "results": results,
+    }
 
-CHROMA_DIRECTORY = PROJECT_ROOT / "chroma"
+
+def format_results(raw: dict[str, Any]) -> list[dict[str, Any]]:
+    """Turn Chroma's nested lists into a simple list of result dicts."""
+
+    ids = (raw.get("ids") or [[]])[0]
+    documents = (raw.get("documents") or [[]])[0]
+    metadatas = (raw.get("metadatas") or [[]])[0]
+    distances = (raw.get("distances") or [[]])[0]
+
+    results: list[dict[str, Any]] = []
+
+    for chunk_id, text, metadata, distance in zip(
+        ids, documents, metadatas, distances
+    ):
+        results.append(
+            {
+                "chunk_id": chunk_id,
+                "document_id": metadata["document_id"],
+                "filename": metadata["filename"],
+                "page_number": metadata["page_number"],
+                "text": text,
+                "distance": round(float(distance), 4),
+            }
+        )
+
+    return results
 
 
 def run_search(
     query: str,
-    top_k: int = 5,
+    top_k: int | None = None,
     document_id: str | None = None,
-) -> list[dict[str, Any]]:
-    """
-    Search the Chroma collection and return clean results.
-    """
+    max_distance: float | None = None,
+    collection=None,
+) -> dict[str, Any]:
+    """Search the indexed PDFs. Returns the response format of our API."""
 
-    query_embedding = generate_query_embedding(
-        query
-    )
+    query = (query or "").strip()
 
-    client = get_chroma_client(
-        CHROMA_DIRECTORY
-    )
+    if not query:
+        raise ValueError("Search query cannot be empty.")
 
-    collection = get_collection(client)
+    top_k = TOP_K_DEFAULT if top_k is None else top_k
+    max_distance = MAX_DISTANCE if max_distance is None else max_distance
+
+    if not 1 <= top_k <= MAX_TOP_K:
+        raise ValueError(f"top_k must be between 1 and {MAX_TOP_K}.")
+
+    if collection is None:
+        collection = get_default_collection()
+
+    if collection.count() == 0:
+        return _response(query, [], EMPTY_INDEX_MESSAGE)
 
     where = None
 
-    if document_id:
+    if document_id is not None:
         document_id = document_id.strip()
 
         if not document_id:
-            raise ValueError(
-                "document_id cannot be empty."
-            )
+            raise ValueError("document_id cannot be empty.")
 
-        where = {
-            "document_id": document_id
-        }
+        where = {"document_id": document_id}
 
-    raw_results = search_chunks(
-        collection=collection,
-        query_embedding=query_embedding,
-        top_k=top_k,
-        where=where,
-    )
+    query_embedding = generate_query_embedding(query)
 
-    return format_results(raw_results)
+    raw = search_chunks(collection, query_embedding, top_k, where)
 
-
-def format_results(
-    results: dict[str, Any],
-) -> list[dict[str, Any]]:
-    """
-    Convert Chroma's nested response into
-    easy-to-use result objects.
-    """
-
-    documents = results.get("documents") or [[]]
-    metadatas = results.get("metadatas") or [[]]
-    distances = results.get("distances") or [[]]
-
-    documents = documents[0]
-    metadatas = metadatas[0]
-    distances = distances[0]
-
-    formatted: list[dict[str, Any]] = []
-
-    for index, text in enumerate(documents):
-
-        metadata = metadatas[index]
-
-        formatted.append(
-            {
-                "file_name": metadata["file_name"],
-                "page_number": metadata["page_number"],
-                "chunk_number": metadata["chunk_number"],
-                "distance": distances[index],
-                "text": text,
-            }
-        )
-
-    return formatted
-
-
-def print_results(
-    results: list[dict[str, Any]],
-) -> None:
+    # Keep only chunks that are close enough.
+    results = [
+        result
+        for result in format_results(raw)
+        if result["distance"] <= max_distance
+    ]
 
     if not results:
-        print("\nNo relevant results found.")
-        return
+        return _response(query, [], NO_MATCH_MESSAGE)
 
-    print("\n" + "=" * 60)
-    print("SEARCH RESULTS")
-    print("=" * 60)
+    return _response(query, results, MATCH_MESSAGE)
 
-    for index, result in enumerate(
-        results,
-        start=1,
-    ):
 
-        print(f"\nResult {index}")
-        print("-" * 60)
+def print_response(response: dict[str, Any]) -> None:
+    print("\n" + response["message"])
 
-        print(
-            f"PDF: {result['file_name']}"
-        )
-
-        print(
-            f"Page: {result['page_number']}"
-        )
-
-        print(
-            f"Chunk: {result['chunk_number']}"
-        )
-
-        print(
-            f"Distance: {result['distance']:.4f}"
-        )
-
-        print("\nText:")
-        print(result["text"])
+    for number, result in enumerate(response["results"], start=1):
+        print("\n" + "-" * 60)
+        print(f"Result {number}")
+        print(f"PDF:      {result['filename']}")
+        print(f"Page:     {result['page_number']}")
+        print(f"Distance: {result['distance']:.4f}  (lower = closer)")
+        print(f"Text:     {result['text']}")
 
 
 def parse_args() -> argparse.Namespace:
-
-    parser = argparse.ArgumentParser(
-        description="Semantic search over indexed PDFs."
-    )
-
+    parser = argparse.ArgumentParser(description="Search indexed PDFs.")
+    parser.add_argument("query", type=str, help="Your question.")
+    parser.add_argument("--top-k", type=int, default=None)
+    parser.add_argument("--document-id", type=str, default=None)
     parser.add_argument(
-        "query",
-        type=str,
-        help="Question to search for.",
-    )
-
-    parser.add_argument(
-        "--top-k",
-        type=int,
-        default=5,
-        help="Number of results.",
-    )
-
-    parser.add_argument(
-        "--document-id",
-        type=str,
+        "--max-distance",
+        type=float,
         default=None,
-        help="Optional document ID filter.",
+        help="Use 2 to see every result with its real distance (for tuning).",
     )
-
     return parser.parse_args()
 
 
 def main() -> None:
-
     args = parse_args()
 
-    results = run_search(
+    response = run_search(
         query=args.query,
         top_k=args.top_k,
         document_id=args.document_id,
+        max_distance=args.max_distance,
     )
 
-    print_results(results)
+    print_response(response)
 
 
 if __name__ == "__main__":
