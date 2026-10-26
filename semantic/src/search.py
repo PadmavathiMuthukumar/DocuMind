@@ -1,6 +1,7 @@
 # semantic/src/search.py
 
 from __future__ import annotations
+import sys
 
 import argparse
 from typing import Any
@@ -140,6 +141,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
+    sys.stdout.reconfigure(errors="replace")
     args = parse_args()
 
     response = run_search(

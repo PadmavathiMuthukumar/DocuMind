@@ -1,6 +1,7 @@
 # semantic/src/ingest.py
 
 from __future__ import annotations
+import sys
 
 import argparse
 import re
@@ -110,6 +111,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
+    sys.stdout.reconfigure(errors="replace")
     args = parse_args()
 
     pdf_name = Path(args.pdf).name

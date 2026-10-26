@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -150,6 +151,9 @@ def extract_pages(data: bytes) -> ExtractedPdf:
                     "EXTRACTION_FAILED",
                     f"Failed to read text from page {page_number}.",
                 ) from None
+
+            # Turn special characters like "ﬁ" into normal letters ("fi").
+            text = unicodedata.normalize("NFKC", text)
 
             # Resource guard against pathological pages.
             text = text[:MAX_CHARS_PER_PAGE]
