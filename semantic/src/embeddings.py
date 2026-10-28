@@ -4,10 +4,15 @@ from __future__ import annotations
 
 from functools import lru_cache
 
+import numpy as np
+
 from .config import EMBEDDING_MODEL_NAME
 
 
 MAX_TEXT_LENGTH = 10_000  # characters
+
+# The ONNX version below supports only this model.
+SUPPORTED_MODEL_NAME = "all-MiniLM-L6-v2"
 
 
 @lru_cache(maxsize=1)
@@ -15,16 +20,28 @@ def get_embedding_model():
     """
     Load the embedding model ONE time and reuse it.
 
-    Loading takes seconds, so we never want to do it on every request.
-    The first time ever, the model is downloaded (about 90 MB) and
-    saved on your computer. After that it loads from disk.
+    This uses ChromaDB's built-in ONNX version of all-MiniLM-L6-v2.
+    It runs with onnxruntime, so it does not need torch (which
+    Windows Application Control blocks on this computer).
     """
 
-    # We import here (not at the top of the file) so that importing
-    # this file is fast. The heavy library only loads when really needed.
-    from sentence_transformers import SentenceTransformer
+    if EMBEDDING_MODEL_NAME != SUPPORTED_MODEL_NAME:
+        raise ValueError(
+            f"EMBEDDING_MODEL_NAME must be '{SUPPORTED_MODEL_NAME}' "
+            f"in this ONNX version, but it is '{EMBEDDING_MODEL_NAME}'."
+        )
 
-    return SentenceTransformer(EMBEDDING_MODEL_NAME)
+    # Imported here so that importing this file stays fast.
+    from chromadb.utils.embedding_functions import ONNXMiniLM_L6_V2
+
+    model = ONNXMiniLM_L6_V2(preferred_providers=["CPUExecutionProvider"])
+
+    # Embed one tiny text now. This downloads the model file on the very
+    # first run and prepares everything, so real requests are not slow
+    # and two requests cannot start the download at the same time.
+    model(["warm up"])
+
+    return model
 
 
 def validate_texts(texts: list[str]) -> None:
@@ -39,33 +56,21 @@ def validate_texts(texts: list[str]) -> None:
             raise ValueError("A text input is too large for embedding.")
 
 
-def generate_embeddings(
-    texts: list[str],
-    batch_size: int = 32,
-    show_progress_bar: bool = False,
-) -> list[list[float]]:
-    """Turn many chunk texts into embeddings (one list of numbers each)."""
+def generate_embeddings(texts: list[str]) -> list[list[float]]:
+    """Turn many chunk texts into embeddings (384 numbers each)."""
 
     validate_texts(texts)
 
     if not texts:
         return []
 
-    if not 1 <= batch_size <= 128:
-        raise ValueError("batch_size must be between 1 and 128.")
-
     model = get_embedding_model()
 
-    embeddings = model.encode(
-        texts,
-        batch_size=batch_size,
-        show_progress_bar=show_progress_bar,
-        # Normalized = every vector has length 1. This makes cosine
-        # distance behave nicely and consistently.
-        normalize_embeddings=True,
-    )
+    vectors = model(texts)
 
-    return embeddings.tolist()
+    # Convert numpy arrays into plain Python lists of numbers,
+    # which is what ChromaDB and JSON expect.
+    return np.asarray(vectors, dtype="float32").tolist()
 
 
 def generate_query_embedding(query: str) -> list[float]:
@@ -81,6 +86,6 @@ def generate_query_embedding(query: str) -> list[float]:
 
     model = get_embedding_model()
 
-    embedding = model.encode([query], normalize_embeddings=True)[0]
+    vectors = model([query])
 
-    return embedding.tolist()
+    return np.asarray(vectors[0], dtype="float32").tolist()
