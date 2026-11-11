@@ -1,0 +1,15 @@
+# Node packages
+node_modules/
+
+# Settings files (keep the examples)
+.env
+.env.*
+!.env.example
+
+# Uploaded PDFs (keep the folder marker)
+backend/uploads/*
+!backend/uploads/.gitkeep
+
+# Logs and editor files
+*.log
+.vscode/
