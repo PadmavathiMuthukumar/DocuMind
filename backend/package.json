@@ -3,11 +3,12 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-   "scripts": {
+    "scripts": {
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
     "test": "node --test",
-    "db:check": "node scripts/checkDatabase.js"
+    "db:check": "node scripts/checkDatabase.js",
+    "semantic:check": "node scripts/checkSemantic.js"
   },
   "engines": {
     "node": ">=20"
