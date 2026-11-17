@@ -3,12 +3,20 @@
 import { createApp } from "./app.js";
 import { config } from "./config/env.js";
 import { connectDatabase, disconnectDatabase } from "./config/database.js";
+import { recoverStaleDocuments } from "./services/documentService.js";
 
 async function start() {
   // 1. Connect to MongoDB first. If it fails, there is no point starting.
   try {
     await connectDatabase();
     console.log("MongoDB connected.");
+
+    // Uploads cut off by an earlier crash are marked as failed.
+    const recovered = await recoverStaleDocuments();
+
+    if (recovered > 0) {
+      console.log(`Marked ${recovered} unfinished document(s) as failed.`);
+    }
   } catch (error) {
     console.error("Could not connect to MongoDB:", error.message);
     process.exit(1);

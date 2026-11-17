@@ -4,28 +4,35 @@ import cors from "cors";
 import express from "express";
 
 import { config } from "./config/env.js";
+import { createDocumentController } from "./controllers/documentController.js";
 import { errorHandler, notFoundHandler } from "./middleware/errorHandler.js";
+import { createDocumentRoutes } from "./routes/documentRoutes.js";
+import { createDocumentService } from "./services/documentService.js";
+import { semanticService } from "./services/semanticService.js";
 
 /**
  * Builds the Express app but does NOT start listening.
- * Keeping this separate from server.js lets our tests start the app
- * on a temporary port.
+ * The Python client can be replaced (tests use a pretend one).
  */
-export function createApp() {
+export function createApp({ semanticClient = semanticService } = {}) {
   const app = express();
 
-  // Do not tell the world which framework we use.
   app.disable("x-powered-by");
 
-  // Only the browser addresses listed in CORS_ORIGINS may call this API.
   app.use(cors({ origin: config.corsOrigins }));
-
-  // Read JSON request bodies (search questions are small).
   app.use(express.json({ limit: "100kb" }));
 
   app.get("/api/health", (req, res) => {
     res.json({ status: "ok", service: "documind-backend" });
   });
+
+  const documentService = createDocumentService({
+    semanticClient,
+    uploadDir: config.uploadDir,
+  });
+  const documentController = createDocumentController({ documentService });
+
+  app.use("/api/documents", createDocumentRoutes({ documentController }));
 
   // Order matters: these two must come last.
   app.use(notFoundHandler);
